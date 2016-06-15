@@ -1,0 +1,45 @@
+#! /usr/bin/env python
+
+'''
+Talk to Elasticsearch
+'''
+
+import sys
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+import pprint
+import requests
+
+def report(args, url):
+    pprint.pprint(requests.get(url % args.master).json())
+
+def count(args):
+    report(args, 'http://%s:9200/_count')
+
+def health(args):
+    if args.indices:
+        report(args, 'http://%s:9200/_cluster/health?level=indices')
+    else:
+        report(args, 'http://%s:9200/_cluster/health')
+
+def main():
+    parser = ArgumentParser(description="Talk to Elasticsearch.",
+                            formatter_class=ArgumentDefaultsHelpFormatter)
+    parser.add_argument('master', help="master hostname")
+    subparsers = parser.add_subparsers()
+
+    parser_count = subparsers.add_parser('count',
+                                         help="return number of documents")
+    parser_count.set_defaults(func=count)
+
+    parser_health = subparsers.add_parser('health',
+                                          help="return health status")
+    parser_health.add_argument('-i', '--indices', action='store_true',
+                               help="detail each index")
+    parser_health.set_defaults(func=health)
+
+    args = parser.parse_args()
+
+    args.func(args)
+
+if __name__ == '__main__':
+    sys.exit(main())
