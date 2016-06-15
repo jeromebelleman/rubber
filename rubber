@@ -5,36 +5,138 @@ Talk to Elasticsearch
 '''
 
 import sys
+import simplejson
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import pprint
+import copy
 import requests
+import prettytable
 
-def report(args, url):
-    pprint.pprint(requests.get(url % args.master).json())
+def query(args, path, method):
+    '''
+    Query Elasticsearch
+    '''
+
+    url = 'http://%s:9200/%s' % (args.master, path)
+    if args.debug:
+        print url
+
+    if not args.dryrun:
+        if method == 'get':
+            response = requests.get(url)
+        elif method == 'post':
+            response = requests.post(url)
+        try:
+            return response.json()
+        except simplejson.decoder.JSONDecodeError:
+            return str(response.text)
 
 def count(args):
-    report(args, 'http://%s:9200/_count')
+    '''
+    Return number of documents
+    '''
+
+    json = query(args, '_count', 'get')
+    pprint.pprint(json)
 
 def health(args):
+    '''
+    Return health status
+    '''
+
     if args.indices:
-        report(args, 'http://%s:9200/_cluster/health?level=indices')
+        json = query(args, '_cluster/health?level=indices', 'get')
+        out = copy.deepcopy(json)
+        if args.red:
+            for index in json['indices']:
+                if json['indices'][index]['status'] != 'red':
+                    del out['indices'][index]
+        json = out
     else:
-        report(args, 'http://%s:9200/_cluster/health')
+        json = query(args, '_cluster/health', 'get')
+
+    pprint.pprint(json)
+
+def catindices(args):
+    '''
+    List indices and their status
+    '''
+
+    print query(args, '_cat/indices?v', 'get')
+
+def allindices(args):
+    '''
+    List open and closed indices
+    '''
+
+    json = query(args, '_cluster/state/metadata', 'get')
+    tab = prettytable.PrettyTable()
+    tab.field_names = ['', '']
+    tab.border = False
+    tab.align = 'l'
+    tab.padding_width = 0
+    for index in json['metadata']['indices']:
+        tab.add_row((index, json['metadata']['indices'][index]['state']))
+    print tab
+
+def openindex(args):
+    '''
+    Open index
+    '''
+
+    for index in args.index:
+        json = query(args, '%s/_open' % index, 'post')
+        pprint.pprint(json)
+
+def closeindex(args):
+    '''
+    Close index
+    '''
+
+    for index in args.index:
+        json = query(args, '%s/_close' % index, 'post')
+        pprint.pprint(json)
 
 def main():
+    '''
+    Parse arguments
+    '''
+
     parser = ArgumentParser(description="Talk to Elasticsearch.",
-                            formatter_class=ArgumentDefaultsHelpFormatter)
+        formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('master', help="master hostname")
+    parser.add_argument('--dryrun', action='store_true',
+        help="don't run query")
+    parser.add_argument('--debug', action='store_true',
+        help="display queried URL")
     subparsers = parser.add_subparsers()
 
     parser_count = subparsers.add_parser('count',
-                                         help="return number of documents")
+        help="return number of documents")
     parser_count.set_defaults(func=count)
 
+    parser_catindices = subparsers.add_parser('catindices',
+        help="list indices and their status")
+    parser_catindices.set_defaults(func=catindices)
+
+    parser_allindices = subparsers.add_parser('allindices',
+        help="list open and closed indices")
+    parser_allindices.set_defaults(func=allindices)
+
+    parser_close = subparsers.add_parser('closeindex', help="close indices")
+    parser_close.add_argument('index', nargs='+', help="index name")
+    parser_close.set_defaults(func=closeindex)
+
+    parser_open = subparsers.add_parser('openindex', help="open indices")
+    parser_open.add_argument('index', nargs='+', help="index name")
+    parser_open.set_defaults(func=openindex)
+
     parser_health = subparsers.add_parser('health',
-                                          help="return health status")
+        help="return health status")
     parser_health.add_argument('-i', '--indices', action='store_true',
-                               help="detail each index")
+        help="detail each index")
+    parser_health.add_argument('-r', '--red', action='store_true',
+        help="only display indices in red status")
     parser_health.set_defaults(func=health)
 
     args = parser.parse_args()
